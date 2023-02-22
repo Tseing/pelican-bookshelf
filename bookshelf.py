@@ -10,7 +10,8 @@ from lxml import etree
 logger = logging.getLogger(__name__)
 BOOKSHELF_KEY = "BOOKSHELF"
 DEFAULT_BOOKSHELF = {"INFOS": ["出版年", "页数", "定价", "ISBN"],
-                     "SAVE_TO_MD": True}
+                     "SAVE_TO_MD": True,
+                     "WAIT_TIME": 2}
 
 
 def init_config(pelican_object):
@@ -32,7 +33,7 @@ def get_page(url):
         return None
     else:
         html = response.text
-        print(response)
+        logger.info(f"Request response: {response.status_code}.")
         return html
 
 
@@ -117,17 +118,19 @@ def get_info_of(tag, meta, selector):
     return meta
 
 
-def generate_bookshelf(meta, book):
-    html = etree.Element("div", {"class": "bookshelf"})
-    etree.SubElement(html, "img", {"src": meta["cover"]})
+def generate_bookshelf(meta, book_name, url):
+    bookshelf = etree.Element("div", {"class": "bookshelf"})
+    book = etree.SubElement(bookshelf, "div", {"class": "book"})
+    etree.SubElement(book, "img", {"src": meta["cover"], "referrerPolicy": "no-referrer"})
     del meta["cover"]
-    title = etree.SubElement(html, "div", {"class": "title"})
-    title.text = book
+    infos = etree.SubElement(book, "div", {"class": "infos"})
+    title = etree.SubElement(infos, "a", {"class": "title", "href": url})
+    title.text = book_name
     for key, value in meta.items():
-        info = etree.SubElement(html, "div", {"class": key})
+        info = etree.SubElement(infos, "div", {"class": key})
         info.text = "：".join([key, value])
-    html = etree.tostring(html, encoding='utf-8', pretty_print=True).decode()
-    return html
+    bookshelf = etree.tostring(bookshelf, encoding='utf-8', pretty_print=True).decode()
+    return bookshelf
 
 
 def replace(path, context=None):
@@ -145,10 +148,10 @@ def replace(path, context=None):
                 _, book, url = search_target.group().strip("{}").split()
                 html = get_page(url)
                 # anti spider, but generation will be lagged.
-                time.sleep(2)
+                time.sleep(BOOKSHELF_SETTING["WAIT_TIME"])
                 if html is not None:
                     meta = parse_page(html)
-                    s = s.replace(search_target.group(), generate_bookshelf(meta, book))
+                    s = s.replace(search_target.group(), generate_bookshelf(meta, book, url))
                     search_target = re.search(pattern, s)
                 else:
                     search_target = re.search(pattern, s)
@@ -159,7 +162,7 @@ def replace(path, context=None):
 
 def register():
     pelican.signals.initialized.connect(init_config)
-    # 写入到输出的 html，不修改 Markdown
-    pelican.signals.content_written.connect(replace)
     # 写入 Markdown，避免爬虫次数过多
     pelican.signals.content_object_init.connect(replace)
+    # 写入到输出的 html，不修改 Markdown
+    pelican.signals.content_written.connect(replace)

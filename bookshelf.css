@@ -1,0 +1,94 @@
+.bookshelf {
+    margin: 1.5em auto 3em auto;
+}
+
+.book {
+    display: flex;
+    text-align: left;
+    margin: 0 auto;
+    text-align: left;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+    justify-content: center;
+    height: 13em;
+    width: 70%;
+    background: #efefefa6;
+    border-radius: 3px;
+    }
+
+.book img {
+    display: block;
+    margin: 0;
+    width: auto;
+    height: 14em;
+    filter: drop-shadow(5px 10px 10px rgba(0,0,0,.5));
+    border-radius: 3px;
+}
+
+.book .infos {
+    line-height: 1.7;
+    margin-left: 2em;
+    width: 15em;
+    opacity: 85%;
+}
+
+.book .title {
+    font-size: 2em;
+    font-weight: 500;
+}
+
+.bookshelf::before {
+    content: "«";
+    right: 75%
+}
+
+.bookshelf::after {
+    content: "»";
+    left: 75%;
+}
+
+.bookshelf::before,
+.bookshelf::after {
+    position: absolute;
+    font-size: 3em;
+    opacity: 0.7;
+}
+
+@media only screen and (min-width: 400px) and (max-width: 900px) and (orientation: landscape){
+    .book{
+        width: 100%;
+    }
+    .bookshelf::before {
+        right: 85%;
+    }
+    .bookshelf::after {
+        left: 85%;
+    }
+}
+
+@media only screen and (max-width: 1000px) and (orientation: portrait){
+    .book{
+        width: 80%;
+    }
+    .bookshelf::before {
+        right: 90%;
+    }
+    .bookshelf::after {
+        left: 90%;
+    }
+}
+
+@media only screen and (max-width: 400px){
+    .book{
+        width: 100%;
+    }
+    .infos {
+        font-size: 0.8em;
+    }
+    .bookshelf::before,
+    .bookshelf::after {
+        display: none;
+    }
+    }
+}
