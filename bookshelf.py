@@ -10,7 +10,7 @@ from lxml import etree
 logger = logging.getLogger(__name__)
 BOOKSHELF_KEY = "BOOKSHELF"
 DEFAULT_BOOKSHELF = {"INFOS": ["出版年", "页数", "定价", "ISBN"],
-                     "SAVE_TO_MD": True,
+                     "SAVE_TO_MD": False,
                      "WAIT_TIME": 2}
 
 
