@@ -2,7 +2,7 @@
 
 pelican-bookshelf 是一款用于在 Pelican 博客上获取并展示豆瓣图书信息的插件，也可以在我的[博客页面](https://leonis.cc/sui-sui-nian/2023-02-22-create-pelican-plugin.html)看到更具体的效果。
 
-![screenshot]()
+![screenshot](https://raw.githubusercontent.com/Tseing/pelican-bookshelf/master/screenshot.png)
 
 具体来说，在撰写文章时，在 Markdown 中写入 `{GET 图书名称 豆瓣URL}`，生成网页时该字段会被替换为类似以下的 HTML 片段：
 
