@@ -1,22 +1,42 @@
-import re
-import os
-import time
-import requests
-import faker
 import logging
+import os
+import re
+import time
+
+import faker
 import pelican.plugins.signals
+import requests
 from lxml import etree
 
 logger = logging.getLogger(__name__)
 BOOKSHELF_KEY = "BOOKSHELF"
 DEFAULT_BOOKSHELF = {"INFOS": ["出版年", "页数", "定价", "ISBN"],
                      "SAVE_TO_MD": False,
-                     "WAIT_TIME": 2}
+                     "WAIT_TIME": 2,
+                     "UPDATE": False}
 
 
 def init_config(pelican_object):
     global BOOKSHELF_SETTING
     BOOKSHELF_SETTING = pelican_object.settings.get(BOOKSHELF_KEY, DEFAULT_BOOKSHELF)
+
+    output_path = pelican_object.settings.get("OUTPUT_PATH", "output/")
+    bookshelf_path = os.path.join(output_path, "bookshelf.yaml")
+    bookshelf_path = BOOKSHELF_SETTING.get("BOOKSHELF_PATH", bookshelf_path)
+    create_bookshelf(bookshelf_path)
+
+    if BOOKSHELF_SETTING.get("UPDATE", False):
+        update_bookshelf(bookshelf_path)
+
+
+def create_bookshelf(bookshelf_path: str) -> None:
+    if not os.path.exists(bookshelf_path):
+        f = open(bookshelf_path, "w+", encoding="utf-8")
+        f.close()
+
+
+def update_bookshelf(bookshelf_path: str) -> None:
+    ...
 
 
 def parse_str(string):
@@ -135,17 +155,17 @@ def generate_bookshelf(meta, book_name, url):
 
 def replace(path, context=None):
     suffix = os.path.splitext(str(path))[-1]
-    if suffix != ".html" and suffix != ".md":
-        pass
-    elif suffix == ".md" and not BOOKSHELF_SETTING["SAVE_TO_MD"]:
+    if suffix != ".html":
         pass
     else:
-        pattern = r"\{GET\s\S+\s[a-zA-z]+://[^\s]*\}"
+        # [GETBOOK://id.book_name]
+        pattern = r"\[GETBOOK://[a-zA-z0-9]+?\..+?\]"
         with open(str(path), 'r', encoding="utf-8") as f:
             s = f.read()
             search_target = re.search(pattern, s)
             while search_target is not None:
-                _, book, url = search_target.group().strip("{}").split()
+                id, book = search_target.group().strip("{GETBOOK://}").split(".")
+                url = "".join(["https://book.douban.com/subject/", id, "/"])
                 html = get_page(url)
                 # anti spider, but generation will be lagged.
                 time.sleep(BOOKSHELF_SETTING["WAIT_TIME"])

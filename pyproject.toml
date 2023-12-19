@@ -1,0 +1,10 @@
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+src_paths = ["tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
