@@ -141,7 +141,7 @@ def get_rank():
 
 
 def get_cover(infos: dict, selector):
-    regex = '//img[@rel="v:photo"]/@src'
+    regex = '//a[@class="nbg"]/@href'
     match = selector.xpath(regex)
     if match:
         infos["cover"] = str(match[0])

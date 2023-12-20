@@ -123,7 +123,7 @@ class TestBookshelf:
             "<p>foo sentence</p>\n"
             '<div class="bookshelf">\n'
             '  <div class="book">\n'
-            '    <img src="1449351_files/s34099286.jpg" referrerPolicy="no-referrer"/>\n'
+            '    <img src="https://img9.doubanio.com/view/subject/l/public/s34099286.jpg" referrerPolicy="no-referrer"/>\n'
             '    <div class="infos">\n'
             '      <a class="title" href="https://book.douban.com/subject/1449351/">呐喊</a>\n'
             '      <div class="year">出版年：1973-3</div>\n'
