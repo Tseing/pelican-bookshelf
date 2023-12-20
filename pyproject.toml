@@ -3,7 +3,7 @@ line-length = 100
 
 [tool.isort]
 profile = "black"
-src_paths = ["tests"]
+src_paths = ["./", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

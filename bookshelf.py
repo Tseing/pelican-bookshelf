@@ -2,49 +2,81 @@ import logging
 import os
 import re
 import time
+from typing import Optional
 
 import faker
 import pelican.plugins.signals
 import requests
+import yaml
 from lxml import etree
+
 
 logger = logging.getLogger(__name__)
 BOOKSHELF_KEY = "BOOKSHELF"
-DEFAULT_BOOKSHELF = {"INFOS": ["出版年", "页数", "定价", "ISBN"],
-                     "SAVE_TO_MD": False,
-                     "WAIT_TIME": 2,
-                     "UPDATE": False}
+DEFAULT_BOOKSHELF = {
+    "FIELDS": ["year", "page", "price", "ISBN"],
+    "WAIT_TIME": 2,
+    "UPDATE": False,
+}
 
 
 def init_config(pelican_object):
     global BOOKSHELF_SETTING
     BOOKSHELF_SETTING = pelican_object.settings.get(BOOKSHELF_KEY, DEFAULT_BOOKSHELF)
 
+    global FIELD_MAP
+    FIELD_MAP = {"year": "出版年" ,"page": "页数", "price": "定价", "binding": "装帧", "ISBN": "ISBN", "rank": "评分"}
+
+    global SUPPORTED_FIELDS
+    SUPPORTED_FIELDS = ["year", "page", "price", "series","binding", "ISBN"]
+    # TODO: rank
+
+    for field in BOOKSHELF_SETTING["FIELDS"]:
+        if field not in SUPPORTED_FIELDS:
+            logger.critical(f"Pelican bookshelf does not support {field}. Please check settings.")
+            raise RuntimeError(f"Not support {field}")
+
     output_path = pelican_object.settings.get("OUTPUT_PATH", "output/")
     bookshelf_path = os.path.join(output_path, "bookshelf.yaml")
     bookshelf_path = BOOKSHELF_SETTING.get("BOOKSHELF_PATH", bookshelf_path)
-    create_bookshelf(bookshelf_path)
+    BOOKSHELF_SETTING.update({"BOOKSHELF_PATH": bookshelf_path})
 
     if BOOKSHELF_SETTING.get("UPDATE", False):
-        update_bookshelf(bookshelf_path)
+        update_bookshelf()
+
+    try:
+        global bookshelf
+        bookshelf = yaml.load(open(bookshelf_path, "r", encoding="utf-8"), yaml.FullLoader)
+    except FileNotFoundError:
+        bookshelf = {}
 
 
-def create_bookshelf(bookshelf_path: str) -> None:
-    if not os.path.exists(bookshelf_path):
-        f = open(bookshelf_path, "w+", encoding="utf-8")
-        f.close()
-
-
-def update_bookshelf(bookshelf_path: str) -> None:
+# TODO: update information in yaml, such as rank
+def update_bookshelf() -> None:
+    """update all information of items in bookshelf.yaml"""
     ...
 
 
-def parse_str(string):
-    name, url = string.strip("{}").split()[1:]
-    return name, url
+def write_bookshelf() -> None:
+    if bookshelf is None or bookshelf == {}:
+        pass
+    else:
+        yaml.dump(bookshelf, open(BOOKSHELF_SETTING["BOOKSHELF_PATH"], "w+", encoding="utf-8"), sort_keys=True)
 
 
-def get_page(url):
+def parse_url2id(url: str) -> str:
+    return str(int(url.strip("/").split("/")[-1]))
+
+
+def parse_id2url(id: str) -> str:
+    try:
+        id = int(id)
+    except:
+        raise RuntimeError(f"ID `{id}` is not a valid douban ID. Cannot be transformer into URL.")
+    return "".join(["https://book.douban.com/subject/", str(id), "/"])
+
+
+def get_page(url: str) -> Optional[str]:
     fake = faker.Faker()
     headers = {"User-Agent": fake.user_agent()}
     response = requests.get(url, headers=headers)
@@ -57,38 +89,53 @@ def get_page(url):
         return html
 
 
-def parse_page(html):
-    meta = {}
+def parse_page(html: str, url: str) -> dict:
+    infos = {}
     selector = etree.HTML(html)
-    get_cover(meta, selector)
-    get_author(meta, selector)
-    get_press(meta, selector)
+    get_name(infos, selector)
+    get_cover(infos, selector)
+    get_author(infos, selector)
+    get_press(infos, selector)
+    infos.update({"url": url})
 
-    if "丛书" in BOOKSHELF_SETTING["INFOS"]:
-        get_series(meta, selector)
+    if "series" in BOOKSHELF_SETTING["FIELDS"]:
+        get_series(infos, selector)
 
-    tags = ["出版年", "页数", "定价", "装帧", "ISBN"]
-    for tag in BOOKSHELF_SETTING["INFOS"]:
-        if tag not in tags:
-            logger.critical(f"There is not {tag} info in the website, please check settings.")
-            raise ValueError(f"网页没有所指定的{tag}信息！")
+    for tag in BOOKSHELF_SETTING["FIELDS"]:
+        if tag == "series":
+            continue
         else:
-            get_info_of(tag, meta, selector)
+            get_info_of(tag, infos, selector)
 
-    return meta
+    return infos
 
 
-def get_cover(meta, selector):
+def get_name(infos: dict, selector):
+    regex = '//h1/span//text()'
+    match = selector.xpath(regex)
+    if match:
+        infos["name"] = str(match[0])
+    else:
+        infos["name"] = "暂无"
+    return infos
+
+
+# TODO: get rank
+def get_rank():
+    ...
+
+
+def get_cover(infos: dict, selector):
     regex = '//img[@rel="v:photo"]/@src'
     match = selector.xpath(regex)
     if match:
-        meta["cover"] = str(match[0])
+        infos["cover"] = str(match[0])
     else:
-        meta["cover"] = ""
-    return meta
+        infos["cover"] = ""
+    return infos
 
 
-def get_author(meta, selector):
+def get_author(infos: dict, selector):
     regex = '//div[@id="info"]/span[child::span[@class="pl"][contains(text(), "作者")]]//text()'
     match = selector.xpath(regex)
     authors = []
@@ -100,89 +147,151 @@ def get_author(meta, selector):
             authors.append(text)
     if authors:
         author = "".join(authors)
-        meta["作者"] = author
+        infos["author"] = author
     else:
-        meta["作者"] = "暂无"
+        infos["author"] = "暂无"
 
-    return meta
+    return infos
 
 
-def get_press(meta, selector):
+def get_press(infos: dict, selector):
     regex = '//div[@id="info"]/child::span[contains(text(), "出版社")]/following-sibling::*[1]/text()'
     match = selector.xpath(regex)
     if match:
-        meta["出版社"] = str(match[0])
+        infos["press"] = str(match[0])
     else:
-        meta["出版社"] = "暂无"
-    return meta
+        infos["press"] = "暂无"
+    return infos
 
 
-def get_series(meta, selector):
+def get_series(infos: dict, selector):
     regex = '//div[@id="info"]/child::span[contains(text(), "丛书")]/following-sibling::*[1]/text()'
     match = selector.xpath(regex)
     if match:
-        meta["丛书"] = str(match[0])
+        infos["series"] = str(match[0])
     else:
-        meta["丛书"] = "暂无"
-    return meta
+        infos["series"] = "暂无"
+    return infos
 
 
-def get_info_of(tag, meta, selector):
+def get_info_of(field, infos, selector):
     # 获取出版信息中的 text 标签
-    regex = f'//text()[preceding-sibling::span[1][contains(text(),"{tag}")]][following-sibling::br[1]]'
+    zh_field = FIELD_MAP[field]
+    regex = (
+        f'//text()[preceding-sibling::span[1][contains(text(),"{zh_field}")]][following-sibling::br[1]]'
+    )
     match = selector.xpath(regex)
     if match:
-        meta[f"{tag}"] = str(match[0]).strip()
+        infos[f"{field}"] = str(match[0]).strip()
     else:
-        meta[f"{tag}"] = "暂无"
-    return meta
+        infos[f"{field}"] = "暂无"
+    return infos
 
 
-def generate_bookshelf(meta, book_name, url):
-    bookshelf = etree.Element("div", {"class": "bookshelf"})
-    book = etree.SubElement(bookshelf, "div", {"class": "book"})
-    etree.SubElement(book, "img", {"src": meta["cover"], "referrerPolicy": "no-referrer"})
-    del meta["cover"]
-    infos = etree.SubElement(book, "div", {"class": "infos"})
-    title = etree.SubElement(infos, "a", {"class": "title", "href": url})
-    title.text = book_name
-    for key, value in meta.items():
-        info = etree.SubElement(infos, "div", {"class": key})
-        info.text = "：".join([key, value])
-    bookshelf = etree.tostring(bookshelf, encoding='utf-8', pretty_print=True).decode()
-    return bookshelf
+def fetch_local_book(bookshelf: dict, id: str) -> dict:
+    return bookshelf[id]
 
 
-def replace(path, context=None):
-    suffix = os.path.splitext(str(path))[-1]
+def fetch_remote_book(url: str) -> Optional[dict]:
+    html = get_page(url)
+    time.sleep(BOOKSHELF_SETTING["WAIT_TIME"])
+    if html is not None:
+        return parse_page(html, url)
+    else:
+        return None
+
+
+def check_url_info(infos: dict) -> None:
+    assert "url" in infos, f"The item has no key named 'url': \n {infos}"
+
+
+def check_specified_fields(infos: dict, fields: list) -> Optional[dict]:
+    default_fields = ["name", "cover"]
+    fields = default_fields + fields
+    try:
+        assert all(field in infos for field in fields)
+    except AssertionError:
+        url = infos["url"]
+        if url is not None:
+            infos = fetch_remote_book()
+            id = parse_url2id(url)
+            global bookshelf
+            bookshelf.update({id: infos})
+            return infos
+        else:
+            return None
+
+
+def generate_book_card(infos: dict, fields: list) -> Optional[str]:
+    check_url_info(infos)
+    infos = check_specified_fields(infos, fields)
+    print(infos)
+    if infos is None:
+        return None
+    else:
+        book_card = etree.Element("div", {"class": "bookshelf"})
+        book = etree.SubElement(book_card, "div", {"class": "book"})
+        etree.SubElement(book, "img", {"src": infos["cover"], "referrerPolicy": "no-referrer"})
+        infos_block = etree.SubElement(book, "div", {"class": "infos"})
+        title = etree.SubElement(infos, "a", {"class": "title", "href": infos["url"]})
+        title.text = infos["name"]
+
+        for key in fields:
+            info = etree.SubElement(infos_block, "div", {"class": key})
+            info.text = "：".join([FIELD_MAP[key], infos[key]])
+
+        book_card = etree.tostring(book_card, encoding="utf-8", pretty_print=True).decode()
+        return book_card
+
+
+def search_replace_str(s: str, pattern: str, file_name: str) -> str:
+    results = re.search(pattern, s)
+    while results is not None:
+        matched_str = results.group()
+        id, _ = matched_str.strip("[GETBOOK://]").split(".")
+        print(id)
+        try:
+            assert bookshelf is not None
+            infos = fetch_local_book(bookshelf, id)
+        except (AssertionError, KeyError):
+            infos = fetch_remote_book(parse_id2url(id))
+
+        content = generate_book_card(infos, BOOKSHELF_SETTING["FIELDS"])
+        print(content)
+        if content is not None:
+            s = s.replace(matched_str, content)
+            results = re.search(pattern, s)
+        else:
+            logger.warning(f"`{matched_str}` in file `{file_name}` was not been replaced. "
+                           f"Please check information of id `{id}` in `{BOOKSHELF_SETTING['BOOKSHELF_PATH']}`.")
+            break
+    return s
+
+
+def replace(path: str, context=None) -> None:
+    suffix = os.path.splitext(path)[-1]
     if suffix != ".html":
         pass
     else:
         # [GETBOOK://id.book_name]
         pattern = r"\[GETBOOK://[a-zA-z0-9]+?\..+?\]"
-        with open(str(path), 'r', encoding="utf-8") as f:
-            s = f.read()
-            search_target = re.search(pattern, s)
-            while search_target is not None:
-                id, book = search_target.group().strip("{GETBOOK://}").split(".")
-                url = "".join(["https://book.douban.com/subject/", id, "/"])
-                html = get_page(url)
-                # anti spider, but generation will be lagged.
-                time.sleep(BOOKSHELF_SETTING["WAIT_TIME"])
-                if html is not None:
-                    meta = parse_page(html)
-                    s = s.replace(search_target.group(), generate_bookshelf(meta, book, url))
-                    search_target = re.search(pattern, s)
-                else:
-                    search_target = re.search(pattern, s)
-                    continue
-        with open(str(path), 'w', encoding="utf-8") as f:
-            f.write(s)
+        selector = etree.parse(path)
+        text = " ".join(selector.xpath("//text()"))
+        if re.search(pattern, text) is not None:
+            p_eles = selector.iterfind(".//p")
+            if p_eles is not None:
+                for p_ele in p_eles:
+                    p_ele.text = search_replace_str(p_ele.text, pattern, path)
+                    # print(p_ele.text)
+                    p_ele.tail = search_replace_str(p_ele.tail, pattern, path)
+                    # print(p_ele.tail)
+
+                # FIXME: cannot modify original DOM
+                with open(path, 'w', encoding="utf-8") as f:
+                    f.write(etree.tostring(selector, encoding="utf-8", pretty_print=True).decode())
 
 
 def register():
     pelican.signals.initialized.connect(init_config)
-    # 写入 Markdown，避免爬虫次数过多
-    pelican.signals.content_object_init.connect(replace)
-    # 写入到输出的 html，不修改 Markdown
     pelican.signals.content_written.connect(replace)
+    pelican.signals.finalized.connect(write_bookshelf)
