@@ -25,10 +25,17 @@ def init_config(pelican_object):
     BOOKSHELF_SETTING = pelican_object.settings.get(BOOKSHELF_KEY, DEFAULT_BOOKSHELF)
 
     global FIELD_MAP
-    FIELD_MAP = {"year": "出版年" ,"page": "页数", "price": "定价", "binding": "装帧", "ISBN": "ISBN", "rank": "评分"}
+    FIELD_MAP = {
+        "year": "出版年",
+        "page": "页数",
+        "price": "定价",
+        "binding": "装帧",
+        "ISBN": "ISBN",
+        "rank": "评分",
+    }
 
     global SUPPORTED_FIELDS
-    SUPPORTED_FIELDS = ["year", "page", "price", "series","binding", "ISBN"]
+    SUPPORTED_FIELDS = ["year", "page", "price", "series", "binding", "ISBN"]
     # TODO: rank
 
     for field in BOOKSHELF_SETTING["FIELDS"]:
@@ -61,7 +68,12 @@ def write_bookshelf() -> None:
     if bookshelf is None or bookshelf == {}:
         pass
     else:
-        yaml.dump(bookshelf, open(BOOKSHELF_SETTING["BOOKSHELF_PATH"], "w+", encoding="utf-8"), sort_keys=True)
+        yaml.dump(
+            bookshelf,
+            open(BOOKSHELF_SETTING["BOOKSHELF_PATH"], "w+", encoding="utf-8"),
+            sort_keys=True,
+            allow_unicode=True,
+        )
 
 
 def parse_url2id(url: str) -> str:
@@ -72,7 +84,10 @@ def parse_id2url(id: str) -> str:
     try:
         id = int(id)
     except:
-        raise RuntimeError(f"ID `{id}` is not a valid douban ID. Cannot be transformer into URL.")
+        raise RuntimeError(
+            f"ID `{id}` is not a valid douban ID. Cannot be transformer into URL."
+            f"Or do you forget to add this ID into `bookshelf.yaml`?"
+        )
     return "".join(["https://book.douban.com/subject/", str(id), "/"])
 
 
@@ -111,7 +126,7 @@ def parse_page(html: str, url: str) -> dict:
 
 
 def get_name(infos: dict, selector):
-    regex = '//h1/span//text()'
+    regex = "//h1/span//text()"
     match = selector.xpath(regex)
     if match:
         infos["name"] = str(match[0])
@@ -177,9 +192,7 @@ def get_series(infos: dict, selector):
 def get_info_of(field, infos, selector):
     # 获取出版信息中的 text 标签
     zh_field = FIELD_MAP[field]
-    regex = (
-        f'//text()[preceding-sibling::span[1][contains(text(),"{zh_field}")]][following-sibling::br[1]]'
-    )
+    regex = f'//text()[preceding-sibling::span[1][contains(text(),"{zh_field}")]][following-sibling::br[1]]'
     match = selector.xpath(regex)
     if match:
         infos[f"{field}"] = str(match[0]).strip()
@@ -193,10 +206,15 @@ def fetch_local_book(bookshelf: dict, id: str) -> dict:
 
 
 def fetch_remote_book(url: str) -> Optional[dict]:
+    """Fetch all fields from douban book web so keep it when get response."""
+    id = parse_url2id(url)
+    global bookshelf
     html = get_page(url)
     time.sleep(BOOKSHELF_SETTING["WAIT_TIME"])
     if html is not None:
-        return parse_page(html, url)
+        infos = parse_page(html, url)
+        bookshelf.update({id: infos})
+        return infos
     else:
         return None
 
@@ -210,14 +228,11 @@ def check_specified_fields(infos: dict, fields: list) -> Optional[dict]:
     fields = default_fields + fields
     try:
         assert all(field in infos for field in fields)
+        return infos
     except AssertionError:
         url = infos["url"]
         if url is not None:
-            infos = fetch_remote_book()
-            id = parse_url2id(url)
-            global bookshelf
-            bookshelf.update({id: infos})
-            return infos
+            return fetch_remote_book()
         else:
             return None
 
@@ -225,7 +240,6 @@ def check_specified_fields(infos: dict, fields: list) -> Optional[dict]:
 def generate_book_card(infos: dict, fields: list) -> Optional[str]:
     check_url_info(infos)
     infos = check_specified_fields(infos, fields)
-    print(infos)
     if infos is None:
         return None
     else:
@@ -233,7 +247,7 @@ def generate_book_card(infos: dict, fields: list) -> Optional[str]:
         book = etree.SubElement(book_card, "div", {"class": "book"})
         etree.SubElement(book, "img", {"src": infos["cover"], "referrerPolicy": "no-referrer"})
         infos_block = etree.SubElement(book, "div", {"class": "infos"})
-        title = etree.SubElement(infos, "a", {"class": "title", "href": infos["url"]})
+        title = etree.SubElement(infos_block, "a", {"class": "title", "href": infos["url"]})
         title.text = infos["name"]
 
         for key in fields:
@@ -248,22 +262,22 @@ def search_replace_str(s: str, pattern: str, file_name: str) -> str:
     results = re.search(pattern, s)
     while results is not None:
         matched_str = results.group()
-        id, _ = matched_str.strip("[GETBOOK://]").split(".")
-        print(id)
+        id, _ = matched_str.strip("<p>[GETBOOK://]</p>").split(".")
         try:
-            assert bookshelf is not None
+            assert bookshelf is not None and bookshelf != {}
             infos = fetch_local_book(bookshelf, id)
         except (AssertionError, KeyError):
             infos = fetch_remote_book(parse_id2url(id))
 
         content = generate_book_card(infos, BOOKSHELF_SETTING["FIELDS"])
-        print(content)
         if content is not None:
             s = s.replace(matched_str, content)
             results = re.search(pattern, s)
         else:
-            logger.warning(f"`{matched_str}` in file `{file_name}` was not been replaced. "
-                           f"Please check information of id `{id}` in `{BOOKSHELF_SETTING['BOOKSHELF_PATH']}`.")
+            logger.warning(
+                f"`{matched_str}` in file `{file_name}` was not been replaced. "
+                f"Please check information of id `{id}` in `{BOOKSHELF_SETTING['BOOKSHELF_PATH']}`."
+            )
             break
     return s
 
@@ -273,23 +287,15 @@ def replace(path: str, context=None) -> None:
     if suffix != ".html":
         pass
     else:
-        # [GETBOOK://id.book_name]
-        pattern = r"\[GETBOOK://[a-zA-z0-9]+?\..+?\]"
-        selector = etree.parse(path)
-        text = " ".join(selector.xpath("//text()"))
-        if re.search(pattern, text) is not None:
-            p_eles = selector.iterfind(".//p")
-            if p_eles is not None:
-                for p_ele in p_eles:
-                    p_ele.text = search_replace_str(p_ele.text, pattern, path)
-                    # print(p_ele.text)
-                    p_ele.tail = search_replace_str(p_ele.tail, pattern, path)
-                    # print(p_ele.tail)
+        # replace <p>[GETBOOK://id.book_name]</p>
+        pattern = r"<p>\[GETBOOK://[a-zA-z0-9]+?\..+?\]</p>"
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read()
 
-                # FIXME: cannot modify original DOM
-                with open(path, 'w', encoding="utf-8") as f:
-                    f.write(etree.tostring(selector, encoding="utf-8", pretty_print=True).decode())
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(search_replace_str(text, pattern, path))
 
+# TODO: reactor func into class
 
 def register():
     pelican.signals.initialized.connect(init_config)
