@@ -1,0 +1,25 @@
+<div class="bookshelf">
+  <div class="book-quote">
+    <div class="book">
+      {% if book.cover %}
+      <img class="cover" referrerpolicy="no-referrer" src="{{ book.cover }}" />
+      {% else %}
+      <div class="cover"></div>
+      {% endif %}
+      <div class="infos">
+        <a class="title" href="{{ book.url }}" target="_blank" rel="noopener noreferrer">{{ book.title }}</a>
+        {% for field in fields %}
+        <div class="{{ field }}">
+        {% if field == "author" %}  作者：{{ book.author|join(" ") }}
+        {% elif field == "pub_house" %}  出版社：{{ book.pub_house }}
+        {% elif field == "pub_tear" %}  出版年：{{ book.pub_year }}
+        {% elif field == "pages" %}  页数：{{ book.pages }}
+        {% elif field == "price" %}  定价：{{ book.price }}
+        {% elif field == "isbn" %}  ISBN：{{ book.isbn }}
+        {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
