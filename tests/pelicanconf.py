@@ -4,7 +4,7 @@ SITEURL = ''
 
 PATH = 'content'
 TIMEZONE = 'Asia/Shanghai'
-DEFAULT_LANG = 'Chinese (Simplified)'
+DEFAULT_LANG = 'zh-cn'
 
 # Feed generation is usually not desired when developing
 FEED_ALL_ATOM = None

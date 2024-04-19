@@ -1,9 +1,8 @@
-import copy
 import logging
 import os
 import re
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import faker
 import pelican.plugins.signals
@@ -13,59 +12,101 @@ from jinja2 import Template
 from lxml import etree
 
 logger = logging.getLogger(__name__)
+RE_NUMBERS = re.compile(r"\d+\d*")
+RE_WHITESPACES = re.compile(r"\s+")
 BOOKSHELF_KEY = "BOOKSHELF"
 DEFAULT_BOOKSHELF = {
     "FIELDS": ["pub_year", "pages", "price", "isbn"],
     "WAIT_TIME": 2,
     "UPDATE": False,
 }
+SUPPORTED_FIELDS = [
+    "subtitle",
+    "orig_title",
+    "author",
+    "translator",
+    "language",
+    "pub_house",
+    "pub_year",
+    "pub_month",
+    "binding",
+    "price",
+    "pages",
+    "isbn",
+    "cubn",
+    "brief",
+    "series",
+    "imprint",
+]
 
 
 class Bookshelf:
     def __init__(self) -> None:
-        self._SUPPORTED_FIELDS = ["pub_year", "pages", "price", "series", "binding", "isbn"]
         self._BOOKSHELF_SETTING = None
-        BASE_PATH = os.path.abspath(__file__)
-        with open(os.path.join(BASE_PATH, "template/bookcard.html")) as f:
+        BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(BASE_PATH, "template/bookcard.html"), "r", encoding="utf-8") as f:
             self.bookcard = Template(f.read())
 
     def init_config(self, pelican_object):
         self._BOOKSHELF_SETTING = pelican_object.settings.get(BOOKSHELF_KEY, DEFAULT_BOOKSHELF)
 
         for field in self._BOOKSHELF_SETTING["FIELDS"]:
-            if field not in self._SUPPORTED_FIELDS:
+            if field not in SUPPORTED_FIELDS:
                 logger.critical(
                     f"Pelican bookshelf does not support {field}. Please check settings."
                 )
                 raise RuntimeError(f"Not support {field}")
 
         bookshelf_path = self._BOOKSHELF_SETTING.get("BOOKSHELF_PATH")
-
         if bookshelf_path is None:
             output_path = pelican_object.settings.get("OUTPUT_PATH", "output/")
             bookshelf_path = os.path.join(output_path, "bookshelf.yaml")
             self._BOOKSHELF_SETTING.update({"BOOKSHELF_PATH": bookshelf_path})
 
-            if not os.path.exists(bookshelf_path):
-                yaml.dump(
-                    {},
-                    open(bookshelf_path, "w+", encoding="utf-8"),
+            try:
+                self.bookshelf = yaml.load(
+                    open(bookshelf_path, "r", encoding="utf-8"), yaml.FullLoader
                 )
+            except FileNotFoundError:
+                self.bookshelf = {}
 
         elif self._BOOKSHELF_SETTING.get("UPDATE", False):
-            self.update_bookshelf()
+            self.bookshelf = self.update_bookshelf(bookshelf_path)
 
-        self.bookshelf = yaml.load(open(bookshelf_path, "r", encoding="utf-8"), yaml.FullLoader)
-        self.douban_parser = DoubanParser(
-            self._BOOKSHELF_SETTING["FIELDS"], self._BOOKSHELF_SETTING["WAIT_TIME"]
+        else:
+            self.bookshelf = yaml.load(open(bookshelf_path, "r", encoding="utf-8"), yaml.FullLoader)
+
+        self.douban_parser = DoubanParser(self._BOOKSHELF_SETTING["WAIT_TIME"])
+
+    def update_bookshelf(self, bookshelf_path: str) -> Dict[str, dict]:
+        """update all information of items in bookshelf.yaml"""
+        bookshelf = yaml.load(open(bookshelf_path, "r", encoding="utf-8"), yaml.FullLoader)
+        yaml.dump(
+            bookshelf,
+            open(
+                os.path.join(
+                    os.path.splitext(os.path.split(bookshelf_path)[-1])[0], "_backup.yaml"
+                ),
+                "w+",
+                encoding="utf-8",
+            ),
+            sort_keys=True,
+            allow_unicode=True,
+        )
+        new_bookshelf = {}
+        for id_ in bookshelf.keys():
+            new_bookshelf.update({id_: self.douban_parser.fetch_remote_book(id_)})
+
+        yaml.dump(
+            new_bookshelf,
+            open(bookshelf_path, "w", encoding="utf-8"),
+            sort_keys=True,
+            allow_unicode=True,
         )
 
-    # TODO: update information in yaml, such as rank
-    def update_bookshelf(self) -> None:
-        """update all information of items in bookshelf.yaml"""
-        ...
+        return new_bookshelf
 
-    def write_bookshelf(self) -> None:
+    def write_bookshelf(self, pelican_object) -> None:
         if self.bookshelf:
             yaml.dump(
                 self.bookshelf,
@@ -74,9 +115,7 @@ class Bookshelf:
                 allow_unicode=True,
             )
 
-    # Generate book card with Jinja
     def generate_book_card(self, infos: dict) -> Optional[str]:
-        infos = self.douban_parser.check_specified_fields(infos)
         if infos is None:
             return None
         else:
@@ -88,9 +127,9 @@ class Bookshelf:
             matched_str = results.group()
             params = matched_str.strip("<p>[GETBOOK://]</p>").split(".")
             if 3 == len(params):
-                params = dict(zip(["id", "title", "cover"], params))
+                params = dict(zip(["id", "name", "cover"], params))
             elif 2 == len(params):
-                params = dict(zip(["id", "title"], params))
+                params = dict(zip(["id", "name"], params))
             else:
                 logger.critical(
                     f"Pelican bookshelf cannot parse command '{matched_str}' in '{file_name}'."
@@ -98,13 +137,21 @@ class Bookshelf:
                 raise RuntimeError(f"Cannot parse right parameters from '{matched_str}'.")
 
             id_ = params["id"]
-            if id_.startswith("douban"):
-                infos = self.bookshelf.get(id_, self.douban_parser.fetch_remote_book(id_))
-            else:
-                assert False, "Only support douban media now."
 
-            infos.update(params)
+            try:
+                infos = self.bookshelf[id_]
+                infos.update(params)
+
+            except KeyError:
+                if id_.startswith("douban"):
+                    infos = self.douban_parser.fetch_remote_book(id_)
+                    infos.update(params)
+                    self.bookshelf.update({id_: infos})
+                else:
+                    assert False, "Only support douban media now."
+
             content = self.generate_book_card(infos)
+            logger.debug(f"debug: {content}")
             if content is not None:
                 s = s.replace(matched_str, content)
                 results = re.search(pattern, s)
@@ -126,41 +173,21 @@ class Bookshelf:
             pattern = r"<p>\[GETBOOK://douban[a-zA-z0-9]+?\..+?\]</p>"
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
-
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.search_replace_str(text, pattern, path))
 
 
 class DoubanParser:
-    def __init__(self, custom_fields: List[str], wait_time: float) -> None:
-        self._text_label_map = {
-            "pub_year": "出版年",
-            "pages": "页数",
-            "price": "定价",
-            "binding": "装帧",
-            "isbn": "ISBN",
-            "rank": "评分",
-        }
-
-        necessary_fields = ["id", "title", "cover", "url"]
-        self._custom_fields = custom_fields
-        self._all_fields = necessary_fields + custom_fields
+    def __init__(self, wait_time: float) -> None:
         self._wait_time = wait_time
 
-        self.RE_NUMBERS = re.compile(r"\d+\d*")
-        self.RE_WHITESPACES = re.compile(r"\s+")
-
-        self._warp_label_func = {label: self.get_info_of for label in self._text_label_map.keys()}
-        self._warp_label_func.update(
-            {"author": self.get_author, "pub_house": self.get_press, "series": self.get_series}
-        )
-
+    @staticmethod
     def parse_url2id(url: str) -> str:
         return "".join(["douban", str(int(url.strip("/").split("/")[-1]))])
 
+    @staticmethod
     def parse_id2url(id: str) -> str:
         try:
-            # TODO: handle other book origin
             id = int(id.strip("douban"))
         except:
             raise RuntimeError(
@@ -182,90 +209,7 @@ class DoubanParser:
             logger.info(f"Request response: {response.status_code}.")
             return html
 
-    @staticmethod
-    def get_title(selector) -> Optional[str]:
-        regex = "//h1/span//text()"
-        match = selector.xpath(regex)
-        if match:
-            return str(match[0])
-        else:
-            return None
-
-    # TODO: get rank
-    def get_rank(): ...
-
-    @staticmethod
-    def get_cover(selector) -> Optional[str]:
-        regex = '//a[@class="nbg"]/@href'
-        match = selector.xpath(regex)
-        if match:
-            return str(match[0])
-        else:
-            return None
-
-    @staticmethod
-    def get_author(selector) -> List[str]:
-        regex = '//div[@id="info"]/span[child::span[@class="pl"][contains(text(), "作者")]]//text()'
-        match = selector.xpath(regex)
-        authors = []
-        for i in match:
-            text = str(i).strip()
-            if text == "作者" or text == ":" or text == "":
-                continue
-            else:
-                authors.append(text)
-        if authors:
-            return authors
-        else:
-            return None
-
-    @staticmethod
-    def get_press(selector) -> Optional[str]:
-        regex = '//div[@id="info"]/child::span[contains(text(), "出版社")]/following-sibling::*[1]/text()'
-        match = selector.xpath(regex)
-        if match:
-            return str(match[0])
-        else:
-            return None
-
-    @staticmethod
-    def get_series(selector) -> Optional[str]:
-        regex = (
-            '//div[@id="info"]/child::span[contains(text(), "丛书")]/following-sibling::*[1]/text()'
-        )
-        match = selector.xpath(regex)
-        if match:
-            return str(match[0])
-        else:
-            return None
-
-    def get_info_of(self, field: str, selector) -> Optional[str]:
-        # 获取出版信息中的 text 标签
-        zh_label = self._text_label_map[field]
-        regex = f'//text()[preceding-sibling::span[1][contains(text(),"{zh_label}")]][following-sibling::br[1]]'
-        match = selector.xpath(regex)
-        if match:
-            return str(match[0]).strip()
-        else:
-            return None
-
-    # def parse_page(self, html: str) -> Dict[str, str]:
-    #     infos = {}
-    #     fields = copy.deepcopy(self._custom_fields)
-    #     selector = etree.HTML(html)
-
-    #     # infos["title"] = self.get_title(selector)
-    #     infos["cover"] = self.get_cover(selector)
-
-    #     for field in fields:
-    #         if field in self._text_label_map.keys():
-    #             infos[field] = self._warp_label_func[field](field, selector)
-    #         else:
-    #             infos[field] = self._warp_label_func[field](selector)
-
-    #     return infos
-
-    def fetch_remote_book(self, id: str) -> Optional[Tuple[str, Dict[str, str]]]:
+    def fetch_remote_book(self, id: str) -> Optional[Dict[str, str]]:
         """Fetch all fields from douban book web so keep it when get response."""
         url = self.parse_id2url(id)
         html = self.get_page(url)
@@ -277,19 +221,13 @@ class DoubanParser:
         else:
             return None
 
-    def check_specified_fields(self, infos: dict) -> Optional[dict]:
-        try:
-            assert all(field in infos for field in self._all_fields)
-            return infos
-        except AssertionError:
-            return self.fetch_remote_book(infos["id"])
-
-    def parse(self, content: str) -> Dict[str, str]:
+    def parse(self, html: str) -> Dict[str, str]:
+        content = etree.HTML(html)
         isbn_elem = content.xpath("//div[@id='info']//span[text()='ISBN:']/following::text()")
         isbn = isbn_elem[0].strip() if isbn_elem else None
 
         title_elem = content.xpath("/html/body//h1/span/text()")
-        title = title_elem[0].strip() if title_elem else f"Unknown Title {self.id_value}"
+        title = title_elem[0].strip() if title_elem else None
 
         subtitle_elem = content.xpath("//div[@id='info']//span[text()='副标题:']/following::text()")
         subtitle = subtitle_elem[0].strip()[:500] if subtitle_elem else None
@@ -314,7 +252,7 @@ class DoubanParser:
 
         pub_date_elem = content.xpath("//div[@id='info']//span[text()='出版年:']/following::text()")
         pub_date = pub_date_elem[0].strip() if pub_date_elem else ""
-        year_month_day = self.RE_NUMBERS.findall(pub_date)
+        year_month_day = RE_NUMBERS.findall(pub_date)
         if len(year_month_day) in (2, 3):
             pub_year = int(year_month_day[0])
             pub_month = int(year_month_day[1])
@@ -362,7 +300,7 @@ class DoubanParser:
         if authors_elem:
             authors = []
             for author in authors_elem:
-                authors.append(self.RE_WHITESPACES.sub(" ", author.strip())[:200])
+                authors.append(RE_WHITESPACES.sub(" ", author.strip())[:200])
         else:
             authors = None
 
@@ -377,7 +315,7 @@ class DoubanParser:
         if translators_elem:
             translators = []
             for translator in translators_elem:
-                translators.append(self.RE_WHITESPACES.sub(" ", translator.strip()))
+                translators.append(RE_WHITESPACES.sub(" ", translator.strip()))
         else:
             translators = None
 
@@ -412,14 +350,16 @@ class DoubanParser:
             "brief": brief,
             "series": series,
             "imprint": imprint,
-            "cove": img_url,
+            "cover": img_url,
         }
 
         return data
 
 
+bookshelf = Bookshelf()
+
+
 def register():
-    bookshelf = Bookshelf()
     pelican.signals.initialized.connect(bookshelf.init_config)
     pelican.signals.content_written.connect(bookshelf.replace)
     pelican.signals.finalized.connect(bookshelf.write_bookshelf)

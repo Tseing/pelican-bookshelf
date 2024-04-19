@@ -2,14 +2,14 @@
 
 pelican-bookshelf 是一款用于在 Pelican 博客上获取并展示豆瓣图书信息的插件，也可以在我的[博客页面](https://leonis.cc/sui-sui-nian/2023-02-22-create-pelican-plugin.html)看到更具体的效果。
 
-![screenshot](https://raw.githubusercontent.com/Tseing/pelican-bookshelf/master/screenshot.png)
+![screenshot](https://raw.githubusercontent.com/Tseing/pelican-bookshelf/master/static/screenshot.png)
 
-具体来说，在撰写文章时，在 Markdown 中以**独立一段**写入 `[GETBOOK://<ID>.<图书名称>]`，例如：
+具体来说，在撰写文章时，在 Markdown 中以**独立一段**写入 `[GETBOOK://<ID>.<图书名称>(.<封面链接>)]`，例如：
 
 ```md
 context, ……
 
-[GETBOOK://27154094.海子的诗]
+[GETBOOK://douban27154094.海子的诗]
 
 ……, context
 ```
@@ -108,5 +108,5 @@ BOOKSHELF = {"FIELD": ["year", "page", "price", "ISBN"],
 
 该插件还在开发中，Bug 在所难免
 
-- [] 完善 README.md
-- [] 用 class 重写主要功能
+- [ ] 完善 README.md
+- [ ] 用 class 重写主要功能
