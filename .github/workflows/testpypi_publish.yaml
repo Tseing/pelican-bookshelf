@@ -1,0 +1,21 @@
+name: Publish Python 🐍 distributions 📦 to TestPyPI
+
+on: push
+
+jobs:
+  testpypi-publish:
+    name: upload release to TestPyPI
+    runs-on: ubuntu-latest
+    permissions:
+      # This permission is needed for private repositories.
+      contents: read
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: pdm-project/setup-pdm@v3
+
+      - name: Publish package distributions to TestPyPI
+        run: pdm publish
+
